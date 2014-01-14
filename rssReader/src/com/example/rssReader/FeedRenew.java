@@ -2,6 +2,7 @@ package com.example.rssReader;
 
 import android.app.IntentService;
 import android.content.Intent;
+import android.database.Cursor;
 import android.util.Xml;
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpResponse;
@@ -9,8 +10,6 @@ import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.impl.client.DefaultHttpClient;
 
-import javax.xml.parsers.SAXParser;
-import javax.xml.parsers.SAXParserFactory;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -25,51 +24,67 @@ import java.util.Map;
  * To change this template use File | Settings | File Templates.
  */
 public class FeedRenew extends IntentService {
-    private String link;
     private ArrayList<Map<String, Object>> data;
-    public FeedRenew(String link) {
+
+    public FeedRenew() {
         super("FeedRenew");
-        this.link = link;
     }
 
     @Override
-    public void onCreate(){
+    public void onCreate() {
         super.onCreate();
     }
 
-    public ArrayList<Map<String, Object>> getData(){
+    public ArrayList<Map<String, Object>> getData() {
         return data;
     }
 
     @Override
-    protected void onHandleIntent(Intent intent){
-        HttpClient httpClient = new DefaultHttpClient();
-        HttpGet httpGet = new HttpGet(link);
-        HttpResponse response;
-        InputStream inputStream = null;
-        try{
-            response = httpClient.execute(httpGet);
-            HttpEntity entity = response.getEntity();
-            inputStream = entity.getContent();
-            SAXParserFactory parserFactory = SAXParserFactory.newInstance();
-            SAXParser parser = parserFactory.newSAXParser();
-            RssParser rssParser = new RssParser();
-            String enc = "UTF-8";
-            if ("http://bash.im/rss".equals(link))
-                enc = "windows-1251";
-            InputStreamReader inputStreamReader = new InputStreamReader(inputStream, enc);
-            Xml.parse(inputStreamReader, rssParser);
-            data = rssParser.getNews();
-        } catch (Exception e){
-            data = null;
-        } finally {
-            if (inputStream != null) {
-                try {
-                    inputStream.close();
-                } catch (IOException e) {
+    protected void onHandleIntent(Intent intent) {
+        SQLRequest sqlRequest = new SQLRequest(this);
+        sqlRequest.openDB();
+        Cursor cursor = sqlRequest.getAllLinks();
+        int size = cursor.getCount();
+        for (int i = 0; i < size; ++i) {
+            cursor.moveToNext();
+            String link = cursor.getString(cursor.getColumnIndex(SQLRequest.keyUrl));
+            link = link.substring(1, link.length() - 1);
+            HttpClient httpClient = new DefaultHttpClient();
+            HttpGet httpGet = new HttpGet(link);
+            HttpResponse response;
+            InputStream inputStream = null;
+            try {
+                response = httpClient.execute(httpGet);
+                HttpEntity entity = response.getEntity();
+                inputStream = entity.getContent();
+                RssParser rssParser = new RssParser();
+                String enc = "UTF-8";
+                if ("http://bash.im/rss".equals(link))
+                    enc = "windows-1251";
+                InputStreamReader inputStreamReader = new InputStreamReader(inputStream, enc);
+                Xml.parse(inputStreamReader, rssParser);
+                data = rssParser.getNews();
+            } catch (Exception e) {
+                data = null;
+            } finally {
+                if (inputStream != null) {
+                    try {
+                        inputStream.close();
+                    } catch (IOException e) {
+                    }
+                }
+                if (data != null) {
+                    for (Map<String, Object> map : data) {
+                        String title = (String) map.get("title");
+                        String description = (String) map.get("description");
+                        String pubDate = (String) map.get("pubDate");
+                        String content = (String) map.get("link");
+                        sqlRequest.addFeed(link, title, description, pubDate, content);
+                    }
                 }
             }
-            stopSelf();
         }
+        sqlRequest.closeDB();
+        stopSelf();
     }
 }
